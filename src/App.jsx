@@ -379,6 +379,26 @@ function AssistantMessageBubble({ msg, isGenerating, isLast }) {
 }
 
 // --- Helper Functions ---
+const parseApiError = async (response) => {
+    try {
+        const errObj = await response.json().catch(() => ({}));
+        if (errObj.error) {
+            if (typeof errObj.error === 'object') {
+                return errObj.error.message 
+                    ? (typeof errObj.error.message === 'object' ? JSON.stringify(errObj.error.message) : String(errObj.error.message))
+                    : JSON.stringify(errObj.error);
+            }
+            return String(errObj.error);
+        }
+        if (errObj.message) {
+            return typeof errObj.message === 'object' ? JSON.stringify(errObj.message) : String(errObj.message);
+        }
+    } catch (e) {
+        // Fallback
+    }
+    return `HTTP ${response.status}`;
+};
+
 const generateSessionId = () => 'session_' + Date.now();
 const generateSharedSessionId = () => 'session_shared_' + Date.now();
 const generateTempMsgId = () => 'image_msg_' + Date.now();
@@ -620,6 +640,18 @@ export default function App() {
     // --- Connection Validation ---
     async function validateConnection(targetSettings) {
         setConnectionStatus('checking');
+        
+        const isOpenRouter = targetSettings.apiUrl && targetSettings.apiUrl.includes('openrouter.ai');
+        const apiKey = isOpenRouter 
+            ? (targetSettings.openrouterApiKey || targetSettings.apiKey || '')
+            : (targetSettings.cicApiKey || targetSettings.apiKey || '');
+
+        if (isOpenRouter && !apiKey) {
+            setConnectionStatus('offline');
+            setConnectionError('Chưa cấu hình OpenRouter API Key. Vui lòng vào Cài đặt để nhập khóa.');
+            return false;
+        }
+
         const config = getRequestConfig('/models', targetSettings);
         
         try {
@@ -636,8 +668,7 @@ export default function App() {
                 fetchModels(targetSettings);
                 return true;
             } else {
-                const errBody = await response.json().catch(() => ({}));
-                const errMsg = errBody.error || `HTTP ${response.status}`;
+                const errMsg = await parseApiError(response);
                 setConnectionStatus('offline');
                 setConnectionError(`API returned error: ${errMsg}`);
                 return false;
@@ -1041,8 +1072,7 @@ export default function App() {
                 });
                 
                 if (!response.ok) {
-                    const errObj = await response.json().catch(() => ({}));
-                    throw new Error(errObj.error?.message || errObj.error || `HTTP ${response.status}`);
+                    throw new Error(await parseApiError(response));
                 }
                 
                 const data = await response.json();
@@ -1141,6 +1171,18 @@ export default function App() {
     };
 
     const triggerSendMessage = async (sessionId, text) => {
+        const activeModel = sessions[sessionId]?.model || settings.selectedModel;
+        const isOpenRouter = (activeModel && activeModel.includes(':free')) || (settings.apiUrl && settings.apiUrl.includes('openrouter.ai'));
+        const apiKey = isOpenRouter 
+            ? (settings.openrouterApiKey || settings.apiKey || '')
+            : (settings.cicApiKey || settings.apiKey || '');
+
+        if (isOpenRouter && !apiKey) {
+            showToast('Vui lòng cấu hình OpenRouter API Key trong phần Cài đặt để bắt đầu chat.', 'error');
+            openSettingsModal();
+            return;
+        }
+
         setIsGenerating(true);
         scrollToBottom(true);
 
@@ -1250,9 +1292,9 @@ export default function App() {
         // Add current user message
         messagesPayload.push({ role: 'user', content: text });
 
-        const activeModel = sessions[sessionId]?.model || settings.selectedModel;
+        const modelToUse = activeModel;
         const apiPayload = {
-            model: activeModel,
+            model: modelToUse,
             messages: messagesPayload,
             temperature: settings.temperature,
             max_tokens: settings.maxTokens,
@@ -1286,11 +1328,7 @@ export default function App() {
             });
 
             if (!response.ok) {
-                const errObj = await response.json().catch(() => ({}));
-                const errorMsg = typeof errObj.error === 'object' && errObj.error
-                    ? (errObj.error.message || JSON.stringify(errObj.error))
-                    : (errObj.error || `HTTP ${response.status}`);
-                throw new Error(errorMsg);
+                throw new Error(await parseApiError(response));
             }
 
             const reader = response.body.getReader();
