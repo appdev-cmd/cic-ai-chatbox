@@ -86,6 +86,8 @@ window.copyToClipboard = (btn, codeText) => {
 const DEFAULT_SETTINGS = {
     apiUrl: 'https://ai-api.cic.com.vn:9443/v1',
     apiKey: '',
+    cicApiKey: '',
+    openrouterApiKey: '',
     connectionType: 'proxy',
     selectedModel: '',
     temperature: 0.7,
@@ -96,6 +98,24 @@ const DEFAULT_SETTINGS = {
     openaiImageModel: 'dall-e-3',
     imageSize: '1024x1024'
 };
+
+const OPENROUTER_FREE_MODELS = [
+    { id: 'nvidia/nemotron-3-ultra-550b-a55b:free', name: 'NVIDIA: Nemotron 3 Ultra (Free)' },
+    { id: 'nvidia/nemotron-3-super-120b-a12b:free', name: 'NVIDIA: Nemotron 3 Super (Free)' },
+    { id: 'nvidia/nemotron-3-nano-30b-a3b:free', name: 'NVIDIA: Nemotron 3 Nano 30B A3B (Free)' },
+    { id: 'nvidia/nemotron-nano-9b-v2:free', name: 'NVIDIA: Nemotron Nano 9B V2 (Free)' },
+    { id: 'nvidia/nemotron-nano-12b-v2-vl:free', name: 'NVIDIA: Nemotron Nano 12B 2 VL (Free)' },
+    { id: 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free', name: 'NVIDIA: Nemotron 3 Nano Omni (Free)' },
+    { id: 'nvidia/nemotron-3.5-content-safety:free', name: 'NVIDIA: Nemotron 3.5 Content Safety (Free)' },
+    { id: 'meta-llama/llama-3.3-70b-instruct:free', name: 'Meta: Llama 3.3 70B Instruct (Free)' },
+    { id: 'meta-llama/llama-3.2-3b-instruct:free', name: 'Meta: Llama 3.2 3B Instruct (Free)' },
+    { id: 'google/gemma-4-31b-it:free', name: 'Google: Gemma 4 31B (Free)' },
+    { id: 'google/gemma-4-26b-a4b-it:free', name: 'Google: Gemma 4 26B A4B (Free)' },
+    { id: 'cohere/north-mini-code:free', name: 'Cohere: North Mini Code (Free)' },
+    { id: 'qwen/qwen3-coder:free', name: 'Qwen: Qwen3 Coder 480B A35B (Free)' },
+    { id: 'openai/gpt-oss-120b:free', name: 'OpenAI: gpt-oss-120b (Free)' },
+    { id: 'nousresearch/hermes-3-llama-3.1-405b:free', name: 'Nous: Hermes 3 405B Instruct (Free)' }
+];
 
 // Encode a session object (title, model, messages) into a URL-safe Base64 string
 const encodeSession = (session, selectedModel) => {
@@ -367,7 +387,24 @@ export default function App() {
     // --- States ---
     const [settings, setSettings] = useState(() => {
         const stored = localStorage.getItem('gemma_chat_settings');
-        return stored ? { ...DEFAULT_SETTINGS, ...JSON.parse(stored) } : DEFAULT_SETTINGS;
+        if (stored) {
+            try {
+                const parsed = JSON.parse(stored);
+                // Migrate API keys if they don't exist yet but apiKey does
+                if (parsed.apiKey) {
+                    if (!parsed.cicApiKey && (!parsed.apiUrl || !parsed.apiUrl.includes('openrouter.ai'))) {
+                        parsed.cicApiKey = parsed.apiKey;
+                    }
+                    if (!parsed.openrouterApiKey && parsed.apiUrl && parsed.apiUrl.includes('openrouter.ai')) {
+                        parsed.openrouterApiKey = parsed.apiKey;
+                    }
+                }
+                return { ...DEFAULT_SETTINGS, ...parsed };
+            } catch (e) {
+                console.error('Error parsing settings:', e);
+            }
+        }
+        return DEFAULT_SETTINGS;
     });
 
     const [sessions, setSessions] = useState(() => {
@@ -390,7 +427,8 @@ export default function App() {
     
     // Settings form fields
     const [formSettings, setFormSettings] = useState({ ...settings });
-    const [apiKeyVisible, setApiKeyVisible] = useState(false);
+    const [cicApiKeyVisible, setCicApiKeyVisible] = useState(false);
+    const [openrouterApiKeyVisible, setOpenrouterApiKeyVisible] = useState(false);
     const [isFetchingModels, setIsFetchingModels] = useState(false);
 
     // Chat input value
@@ -448,7 +486,7 @@ export default function App() {
     // --- Validate connection on mount or setting changes ---
     useEffect(() => {
         validateConnection(settings);
-    }, [settings.apiUrl, settings.apiKey, settings.connectionType]);
+    }, [settings.apiUrl, settings.apiKey, settings.cicApiKey, settings.openrouterApiKey, settings.connectionType]);
 
     // --- Import shared session on mount ---
     useEffect(() => {
@@ -558,16 +596,21 @@ export default function App() {
             'Content-Type': 'application/json'
         };
 
+        const isOpenRouter = targetSettings.apiUrl && targetSettings.apiUrl.includes('openrouter.ai');
+        const apiKey = isOpenRouter 
+            ? (targetSettings.openrouterApiKey || targetSettings.apiKey || '')
+            : (targetSettings.cicApiKey || targetSettings.apiKey || '');
+
         if (isProxy) {
             url = `/api/proxy${cleanPath}`;
             headers['X-Target-Url'] = targetSettings.apiUrl;
-            if (targetSettings.apiKey) {
-                headers['X-Target-Key'] = targetSettings.apiKey;
+            if (apiKey) {
+                headers['X-Target-Key'] = apiKey;
             }
         } else {
             url = `${targetSettings.apiUrl}${cleanPath}`;
-            if (targetSettings.apiKey) {
-                headers['Authorization'] = `Bearer ${targetSettings.apiKey}`;
+            if (apiKey) {
+                headers['Authorization'] = `Bearer ${apiKey}`;
             }
         }
 
@@ -620,7 +663,13 @@ export default function App() {
 
             if (response.ok) {
                 const data = await response.json();
-                const modelList = data.data || [];
+                let modelList = data.data || [];
+                
+                // Lọc các mô hình miễn phí nếu kết nối OpenRouter
+                if (targetSettings.apiUrl && targetSettings.apiUrl.includes('openrouter.ai')) {
+                    modelList = modelList.filter(m => m.id.endsWith(':free'));
+                }
+                
                 setModels(modelList);
                 
                 // Set default model if none selected or if previous selected model doesn't exist
@@ -1402,6 +1451,10 @@ export default function App() {
         return getSessionTimestamp(b) - getSessionTimestamp(a);
     });
 
+    const displayedModels = models.length > 0 
+        ? models 
+        : (formSettings.apiUrl && formSettings.apiUrl.includes('openrouter.ai') ? OPENROUTER_FREE_MODELS : []);
+
     return (
         <div className="app-container">
             {/* Sidebar */}
@@ -1772,6 +1825,35 @@ export default function App() {
                                 <h4>API Configuration</h4>
                                 
                                 <div className="form-group">
+                                    <label>Cấu hình nhanh (Preset)</label>
+                                    <select 
+                                        value={formSettings.apiUrl && formSettings.apiUrl.includes('openrouter.ai') ? 'openrouter' : 'cic'}
+                                        onChange={(e) => {
+                                            if (e.target.value === 'openrouter') {
+                                                setFormSettings(prev => ({
+                                                    ...prev,
+                                                    apiUrl: 'https://openrouter.ai/api/v1',
+                                                    connectionType: 'direct',
+                                                    selectedModel: 'nvidia/nemotron-3-ultra-550b-a55b:free'
+                                                }));
+                                                setModels([]);
+                                            } else {
+                                                setFormSettings(prev => ({
+                                                    ...prev,
+                                                    apiUrl: 'https://ai-api.cic.com.vn:9443/v1',
+                                                    connectionType: 'proxy',
+                                                    selectedModel: ''
+                                                }));
+                                                setModels([]);
+                                            }
+                                        }}
+                                    >
+                                        <option value="cic">CIC AI API (Mặc định)</option>
+                                        <option value="openrouter">OpenRouter Free Models (NVIDIA & Khác)</option>
+                                    </select>
+                                </div>
+
+                                <div className="form-group">
                                     <label>Connection Mode</label>
                                     <select 
                                         value={formSettings.connectionType}
@@ -1794,20 +1876,39 @@ export default function App() {
                                 </div>
 
                                 <div className="form-group">
-                                    <label>API Key (Authorization Token)</label>
+                                    <label>CIC AI API Key</label>
                                     <div className="password-input-wrapper">
                                         <input 
-                                            type={apiKeyVisible ? "text" : "password"} 
-                                            placeholder="Enter API Key"
-                                            value={formSettings.apiKey}
-                                            onChange={(e) => setFormSettings(prev => ({ ...prev, apiKey: e.target.value.trim() }))}
+                                            type={cicApiKeyVisible ? "text" : "password"} 
+                                            placeholder="Nhập CIC AI API Key"
+                                            value={formSettings.cicApiKey || ''}
+                                            onChange={(e) => setFormSettings(prev => ({ ...prev, cicApiKey: e.target.value.trim() }))}
                                         />
                                         <button 
                                             type="button" 
                                             className="toggle-password-btn" 
-                                            onClick={() => setApiKeyVisible(prev => !prev)}
+                                            onClick={() => setCicApiKeyVisible(prev => !prev)}
                                         >
-                                            <i className={`fa-regular ${apiKeyVisible ? 'fa-eye-slash' : 'fa-eye'}`}></i>
+                                            <i className={`fa-regular ${cicApiKeyVisible ? 'fa-eye-slash' : 'fa-eye'}`}></i>
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div className="form-group">
+                                    <label>OpenRouter API Key</label>
+                                    <div className="password-input-wrapper">
+                                        <input 
+                                            type={openrouterApiKeyVisible ? "text" : "password"} 
+                                            placeholder="Nhập OpenRouter API Key"
+                                            value={formSettings.openrouterApiKey || ''}
+                                            onChange={(e) => setFormSettings(prev => ({ ...prev, openrouterApiKey: e.target.value.trim() }))}
+                                        />
+                                        <button 
+                                            type="button" 
+                                            className="toggle-password-btn" 
+                                            onClick={() => setOpenrouterApiKeyVisible(prev => !prev)}
+                                        >
+                                            <i className={`fa-regular ${openrouterApiKeyVisible ? 'fa-eye-slash' : 'fa-eye'}`}></i>
                                         </button>
                                     </div>
                                 </div>
@@ -1821,13 +1922,13 @@ export default function App() {
                                         <select 
                                             value={formSettings.selectedModel}
                                             onChange={(e) => setFormSettings(prev => ({ ...prev, selectedModel: e.target.value }))}
-                                            disabled={models.length === 0}
+                                            disabled={displayedModels.length === 0}
                                         >
-                                            {models.length === 0 ? (
+                                            {displayedModels.length === 0 ? (
                                                 <option value="">-- Load models first --</option>
                                             ) : (
-                                                models.map(m => (
-                                                    <option key={m.id} value={m.id}>{m.id}</option>
+                                                displayedModels.map(m => (
+                                                    <option key={m.id} value={m.id}>{m.name || m.id}</option>
                                                 ))
                                             )}
                                         </select>

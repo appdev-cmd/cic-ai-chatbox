@@ -4,7 +4,7 @@ import json
 import urllib.request
 import urllib.error
 import sys
-from http.server import SimpleHTTPRequestHandler, HTTPServer
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 # Reconfigure stdout/stderr to support UTF-8 printing on Windows console
 try:
@@ -299,7 +299,7 @@ if __name__ == '__main__':
     
     PORT = 8000
     server_address = ('', PORT)
-    httpd = HTTPServer(server_address, ProxyHandler)
+    httpd = ThreadingHTTPServer(server_address, ProxyHandler)
     
     print(f"==================================================")
     print(f" CIC AI Chatbox is running at:")
