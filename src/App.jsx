@@ -1287,7 +1287,10 @@ export default function App() {
 
             if (!response.ok) {
                 const errObj = await response.json().catch(() => ({}));
-                throw new Error(errObj.error || `HTTP ${response.status}`);
+                const errorMsg = typeof errObj.error === 'object' && errObj.error
+                    ? (errObj.error.message || JSON.stringify(errObj.error))
+                    : (errObj.error || `HTTP ${response.status}`);
+                throw new Error(errorMsg);
             }
 
             const reader = response.body.getReader();
